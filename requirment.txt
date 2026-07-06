@@ -1,6 +1,5 @@
 streamlit
 g4f
-google-search-results
 duckduckgo-search
 beautifulsoup4
 pillow

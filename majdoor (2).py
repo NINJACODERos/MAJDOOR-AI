@@ -135,6 +135,18 @@ if st.session_state.chat_history:
 
 user_input = st.chat_input("Type your message...")
 
+# 📸 Image input for handwriting/notes/electronics questions
+with st.expander("📸 Photo se sawal poocho (notebook, circuit, etc.)"):
+    img_source = st.radio("Source:", ["Camera", "Upload"], horizontal=True, label_visibility="collapsed")
+    uploaded_image = st.camera_input("Photo kheecho") if img_source == "Camera" else st.file_uploader(
+        "Ya file upload karo", type=["png", "jpg", "jpeg"]
+    )
+    image_question = st.text_input(
+        "Photo ke baare mein kya poochna hai? (khaali chhodo toh 'explain this' maan lenge)",
+        key="image_question_input"
+    )
+    analyze_clicked = st.button("🔍 Analyze karo")
+
 
 # 🖼️ Image search with retry + backend fallback (auto -> bing) on ratelimit
 def search_image_ddg(query, retries=2, delay=2):
@@ -176,6 +188,22 @@ def search_image_ddg(query, retries=2, delay=2):
     return None, f"Duck image search error: {last_error}"
 
 
+# 👁️ Vision: read handwriting/diagrams from an uploaded/captured photo
+def analyze_image(image_file, question):
+    try:
+        images = [[image_file, "photo.jpg"]]
+        client = g4f.Client(provider=g4f.Provider.Blackbox)
+        result = client.chat.completions.create(
+            [{"content": question, "role": "user"}],
+            "",
+            images=images
+        )
+        answer = result.choices[0].message.content
+        return strip_reasoning(answer)
+    except Exception as e:
+        return f"❌ Photo padhne mein dikkat aa gayi: {e}"
+
+
 # 💡 Web/Image triggers
 def handle_triggered_response(text):
     # Prefix dd/: use DuckDuckGo/ddgs text search
@@ -212,6 +240,15 @@ def handle_triggered_response(text):
 
 
 # 🧠 Chat Handler
+if analyze_clicked and uploaded_image is not None:
+    q = image_question.strip() if image_question.strip() else "Explain what's in this image and answer/solve any question shown in it."
+    st.session_state.chat_history.append({"role": "user", "content": f"[📸 Photo] {q}"})
+    answer = analyze_image(uploaded_image, q)
+    response = add_sarcasm_emoji(answer)
+    st.session_state.chat_history.append({"role": "assistant", "content": response})
+elif analyze_clicked and uploaded_image is None:
+    st.warning("Pehle photo toh lo ya upload karo, bhai.")
+
 if user_input:
     st.session_state.chat_history.append({"role": "user", "content": user_input})
     trig = handle_triggered_response(user_input.strip())
@@ -247,4 +284,3 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-

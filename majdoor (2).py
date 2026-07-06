@@ -144,18 +144,6 @@ if st.session_state.chat_history:
 
 user_input = st.chat_input("Type your message...")
 
-# 📸 Image input for handwriting/notes/electronics questions
-with st.expander("📸 Photo se sawal poocho (notebook, circuit, etc.)"):
-    img_source = st.radio("Source:", ["Camera", "Upload"], horizontal=True, label_visibility="collapsed")
-    uploaded_image = st.camera_input("Photo kheecho") if img_source == "Camera" else st.file_uploader(
-        "Ya file upload karo", type=["png", "jpg", "jpeg"]
-    )
-    image_question = st.text_input(
-        "Photo ke baare mein kya poochna hai? (khaali chhodo toh 'explain this' maan lenge)",
-        key="image_question_input"
-    )
-    analyze_clicked = st.button("🔍 Analyze karo")
-
 
 # 🖼️ Image search with retry + backend fallback (auto -> bing) on ratelimit
 def search_image_ddg(query, retries=2, delay=2):
@@ -197,46 +185,6 @@ def search_image_ddg(query, retries=2, delay=2):
     return None, f"Duck image search error: {last_error}"
 
 
-# 👁️ Vision: read handwriting/diagrams via HuggingFace's free Inference API
-# (needs a free HF token — no credit card — set as HF_TOKEN env var / Streamlit secret)
-import base64
-import requests
-
-HF_VISION_MODEL = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_VISION_MODEL}"
-
-
-def analyze_image(image_file, question):
-    hf_token = os.environ.get("HF_TOKEN") or st.secrets.get("HF_TOKEN", None) if hasattr(st, "secrets") else os.environ.get("HF_TOKEN")
-    headers = {"Authorization": f"Bearer {hf_token}"} if hf_token else {}
-
-    image_bytes = image_file.getvalue() if hasattr(image_file, "getvalue") else image_file.read()
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    payload = {
-        "inputs": {
-            "text": question,
-            "image": f"data:image/jpeg;base64,{image_b64}"
-        }
-    }
-
-    try:
-        response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
-        if response.status_code == 503:
-            return "❌ Model abhi warm-up ho raha hai, thodi der baad phir try karo."
-        if response.status_code == 401:
-            return "❌ HF_TOKEN missing/invalid hai — Streamlit secrets mein free HuggingFace token daalo."
-        response.raise_for_status()
-        data = response.json()
-        if isinstance(data, list) and data and "generated_text" in data[0]:
-            return strip_reasoning(data[0]["generated_text"])
-        if isinstance(data, dict) and "generated_text" in data:
-            return strip_reasoning(data["generated_text"])
-        return f"❌ Unexpected response format: {data}"
-    except Exception as e:
-        return f"❌ Photo padhne mein dikkat aa gayi: {e}"
-
-
 # 💡 Web/Image triggers
 def handle_triggered_response(text):
     # Prefix dd/: use DuckDuckGo/ddgs text search
@@ -273,15 +221,6 @@ def handle_triggered_response(text):
 
 
 # 🧠 Chat Handler
-if analyze_clicked and uploaded_image is not None:
-    q = image_question.strip() if image_question.strip() else "Explain what's in this image and answer/solve any question shown in it."
-    st.session_state.chat_history.append({"role": "user", "content": f"[📸 Photo] {q}"})
-    answer = analyze_image(uploaded_image, q)
-    response = add_sarcasm_emoji(answer)
-    st.session_state.chat_history.append({"role": "assistant", "content": response})
-elif analyze_clicked and uploaded_image is None:
-    st.warning("Pehle photo toh lo ya upload karo, bhai.")
-
 if user_input:
     st.session_state.chat_history.append({"role": "user", "content": user_input})
     trig = handle_triggered_response(user_input.strip())

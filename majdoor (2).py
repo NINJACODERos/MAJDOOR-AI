@@ -24,7 +24,7 @@ except ImportError:
 
     def search(query):
         with DDGS() as ddgs:
-            items = list(ddgs.text(query, region='wt-wt', safesearch='Off', max_results=10))
+            items = list(ddgs.text(query, region='wt-wt', safesearch='Off', max_results=1))
         return items[0].get('body') if items else "Kuch bhi nahi mila duck se bhai."
 
 # For image generation via g4f.Provider.bing if available
@@ -170,16 +170,16 @@ def search_image_ddg(query, retries=2, delay=2):
                         try:
                             hits = list(ddgs.images(
                                 query, region='wt-wt', safesearch='Off',
-                                max_results=10, backend=backend 
+                                max_results=1, backend=backend
                             ))
                         except TypeError:
                             # Installed ddgs/duckduckgo_search version doesn't
                             # support the backend= param — call without it.
                             hits = list(ddgs.images(
-                                query, region='wt-wt', safesearch='Off', max_results=10
+                                query, region='wt-wt', safesearch='Off', max_results=1
                             ))
                     elif hasattr(ddgs, "image"):
-                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=10))
+                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=1))
                     else:
                         return None, "Duck image search method unavailable."
                 if hits:
@@ -197,42 +197,44 @@ def search_image_ddg(query, retries=2, delay=2):
     return None, f"Duck image search error: {last_error}"
 
 
-# 👁️ Vision: read handwriting/diagrams from an uploaded/captured photo
-def get_vision_providers():
-    """Blackbox is g4f's confirmed no-auth vision-capable provider; list others as fallback."""
-    candidate_names = ["Blackbox", "blackbox", "Copilot", "HuggingSpace"]
-    providers = []
-    for name in candidate_names:
-        provider = getattr(g4f.Provider, name, None)
-        if provider is not None:
-            providers.append(provider)
-    return providers
+# 👁️ Vision: read handwriting/diagrams via HuggingFace's free Inference API
+# (needs a free HF token — no credit card — set as HF_TOKEN env var / Streamlit secret)
+import base64
+import requests
+
+HF_VISION_MODEL = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_VISION_MODEL}"
 
 
 def analyze_image(image_file, question):
-    providers = get_vision_providers()
-    if not providers:
-        return ("❌ Is g4f version mein koi vision-capable provider nahi mila. "
-                "requirements.txt mein g4f ko upgrade karo (pip install -U g4f[image]).")
+    hf_token = os.environ.get("HF_TOKEN") or st.secrets.get("HF_TOKEN", None) if hasattr(st, "secrets") else os.environ.get("HF_TOKEN")
+    headers = {"Authorization": f"Bearer {hf_token}"} if hf_token else {}
 
     image_bytes = image_file.getvalue() if hasattr(image_file, "getvalue") else image_file.read()
-    last_error = None
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    for provider in providers:
-        try:
-            client = g4f.Client(provider=provider)
-            result = client.chat.completions.create(
-                model=g4f.models.default,
-                messages=[{"role": "user", "content": question}],
-                image=image_bytes
-            )
-            answer = result.choices[0].message.content
-            return strip_reasoning(answer)
-        except Exception as e:
-            last_error = e
-            continue  # try next provider
+    payload = {
+        "inputs": {
+            "text": question,
+            "image": f"data:image/jpeg;base64,{image_b64}"
+        }
+    }
 
-    return f"❌ Photo padhne mein dikkat aa gayi: {last_error}"
+    try:
+        response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
+        if response.status_code == 503:
+            return "❌ Model abhi warm-up ho raha hai, thodi der baad phir try karo."
+        if response.status_code == 401:
+            return "❌ HF_TOKEN missing/invalid hai — Streamlit secrets mein free HuggingFace token daalo."
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, list) and data and "generated_text" in data[0]:
+            return strip_reasoning(data[0]["generated_text"])
+        if isinstance(data, dict) and "generated_text" in data:
+            return strip_reasoning(data["generated_text"])
+        return f"❌ Unexpected response format: {data}"
+    except Exception as e:
+        return f"❌ Photo padhne mein dikkat aa gayi: {e}"
 
 
 # 💡 Web/Image triggers

@@ -136,29 +136,36 @@ if st.session_state.chat_history:
 user_input = st.chat_input("Type your message...")
 
 
-# 🖼️ Image search with retry + ddgs/duckduckgo_search fallback
-def search_image_ddg(query, retries=3, delay=2):
+# 🖼️ Image search with retry + backend fallback (auto -> bing) on ratelimit
+def search_image_ddg(query, retries=2, delay=2):
+    backends_to_try = ["auto", "bing"]
     last_error = None
-    for attempt in range(retries):
-        try:
-            with DDGS() as ddgs:
-                if hasattr(ddgs, "images"):
-                    hits = list(ddgs.images(query, region='wt-wt', safesearch='Off', max_results=1))
-                elif hasattr(ddgs, "image"):
-                    hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=1))
-                else:
-                    return None, "Duck image search method unavailable."
-            if hits:
-                url = hits[0].get('image') or hits[0].get('thumbnail') or hits[0].get('url')
-                if url:
-                    return url, None
-            return None, "Koi image nahi mila duck se."
-        except Exception as e:
-            last_error = e
-            if "403" in str(e) or "ratelimit" in str(e).lower():
-                time.sleep(delay * (attempt + 1))  # backoff before retry
-                continue
-            break  # non-ratelimit error, don't bother retrying
+
+    for backend in backends_to_try:
+        for attempt in range(retries):
+            try:
+                with DDGS() as ddgs:
+                    if hasattr(ddgs, "images"):
+                        hits = list(ddgs.images(
+                            query, region='wt-wt', safesearch='Off',
+                            max_results=1, backend=backend
+                        ))
+                    elif hasattr(ddgs, "image"):
+                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=1))
+                    else:
+                        return None, "Duck image search method unavailable."
+                if hits:
+                    url = hits[0].get('image') or hits[0].get('thumbnail') or hits[0].get('url')
+                    if url:
+                        return url, None
+                # no hits but no error either — try next backend
+                break
+            except Exception as e:
+                last_error = e
+                if "403" in str(e) or "ratelimit" in str(e).lower():
+                    time.sleep(delay * (attempt + 1))  # backoff before retry on same backend
+                    continue
+                break  # non-ratelimit error, move to next backend
     return None, f"Duck image search error: {last_error}"
 
 

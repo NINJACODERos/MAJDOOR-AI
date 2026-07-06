@@ -1,0 +1,12 @@
+streamlit
+google-search-results      # for SerpAPI (import via `from serpapi import GoogleSearch`)
+duckduckgo-search>=5.0     # for internal DuckDuckGo fallback
+beautifulsoup4
+pillow
+aiohttp
+requests
+# g4f: either install from GitHub or use local clone
+# Option A: install from GitHub
+g4f @ git+https://github.com/xtekky/gpt4free
+# Option B: if you clone gpt4free into your repo root
+# -e ./gpt4free

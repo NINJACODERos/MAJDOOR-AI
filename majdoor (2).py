@@ -146,7 +146,7 @@ def handle_triggered_response(text):
             except:
                 pass
         # DuckDuckGo image search fallback
-        if 'DDGS' in globals() and hasattr(DDGS, 'images') or hasattr(DDGS, 'image'):
+        if 'DDGS' in globals() and (hasattr(DDGS, 'images') or hasattr(DDGS, 'image')):
             try:
                 with DDGS() as ddgs:
                     if hasattr(ddgs, "images"):
@@ -160,8 +160,7 @@ def handle_triggered_response(text):
                     if url:
                         return f"🖼️ DuckDuckGo se image:\n\n![image]({url})"
                 return "❌ Koi image nahi mila duck se."
-
-        except Exception as e:
+            except Exception as e:
                 return f"❌ Duck image search error: {e}"
         return "❌ Image feature unavailable."
 
@@ -201,4 +200,5 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True
-        )
+    )
+            

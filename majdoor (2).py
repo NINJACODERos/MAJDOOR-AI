@@ -1,5 +1,5 @@
 import sys, os, streamlit as st
-from serpapi import GoogleSearch
+
 
 # Adjust path to your local gpt4free clone
 sys.path.append(os.path.abspath("../gpt4free"))
@@ -34,20 +34,7 @@ if "mode" not in st.session_state:
     st.session_state.mode = "normal"
 
 # 🏫 SerpAPI (as backup for prefix g/)
-SERP_API_KEY = "1d114d991907b60a6e30ecdad92f3727c2309b73ca0d"
-def ask_google_backup(query):
-    try:
-        params = {"engine": "google", "q": query, "api_key": SERP_API_KEY}
-        search_api = GoogleSearch(params)
-        results = search_api.get_dict()
-        if "answer_box" in results:
-            ab = results["answer_box"]
-            return ab.get("answer") or ab.get("snippet") or ", ".join(ab.get("highlighted_words", []))
-        elif "organic_results" in results and results["organic_results"]:
-            return results["organic_results"][0].get("snippet", "❌ Google bhi chup ho gaya.")
-        return "❌ Google confuse ho gaya. Sawal dubara puch bhai."
-    except Exception as e:
-        return f"❌ Google API se bhatak gaya: {e}"
+
 
 # 🎭 Sarcasm tagging
 def add_sarcasm_emoji(text):

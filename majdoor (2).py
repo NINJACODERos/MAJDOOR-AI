@@ -170,16 +170,16 @@ def search_image_ddg(query, retries=2, delay=2):
                         try:
                             hits = list(ddgs.images(
                                 query, region='wt-wt', safesearch='Off',
-                                max_results=1, backend=backend
+                                max_results=10, backend=backend
                             ))
                         except TypeError:
                             # Installed ddgs/duckduckgo_search version doesn't
                             # support the backend= param — call without it.
                             hits = list(ddgs.images(
-                                query, region='wt-wt', safesearch='Off', max_results=1
+                                query, region='wt-wt', safesearch='Off', max_results=10
                             ))
                     elif hasattr(ddgs, "image"):
-                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=1))
+                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=10))
                     else:
                         return None, "Duck image search method unavailable."
                 if hits:

@@ -146,10 +146,17 @@ def search_image_ddg(query, retries=2, delay=2):
             try:
                 with DDGS() as ddgs:
                     if hasattr(ddgs, "images"):
-                        hits = list(ddgs.images(
-                            query, region='wt-wt', safesearch='Off',
-                            max_results=1, backend=backend
-                        ))
+                        try:
+                            hits = list(ddgs.images(
+                                query, region='wt-wt', safesearch='Off',
+                                max_results=1, backend=backend
+                            ))
+                        except TypeError:
+                            # Installed ddgs/duckduckgo_search version doesn't
+                            # support the backend= param — call without it.
+                            hits = list(ddgs.images(
+                                query, region='wt-wt', safesearch='Off', max_results=1
+                            ))
                     elif hasattr(ddgs, "image"):
                         hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=1))
                     else:
@@ -240,3 +247,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+

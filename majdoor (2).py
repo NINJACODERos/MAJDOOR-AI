@@ -1,4 +1,3 @@
-
 import sys, os, re, time, streamlit as st
 
 # 🔧 Point g4f's cookie/HAR storage at a writable directory (Streamlit Cloud's
@@ -147,7 +146,7 @@ user_input = st.chat_input("Type your message...")
 
 
 # 🖼️ Image search with retry + backend fallback (auto -> bing) on ratelimit
-def search_image_ddg(query, retries=2, delay=2):
+def search_image_ddg(query, retries=2, delay=2, count=7):
     backends_to_try = ["auto", "bing"]
     last_error = None
 
@@ -159,22 +158,26 @@ def search_image_ddg(query, retries=2, delay=2):
                         try:
                             hits = list(ddgs.images(
                                 query, region='wt-wt', safesearch='Off',
-                                max_results=1, backend=backend
+                                max_results=count, backend=backend
                             ))
                         except TypeError:
                             # Installed ddgs/duckduckgo_search version doesn't
                             # support the backend= param — call without it.
                             hits = list(ddgs.images(
-                                query, region='wt-wt', safesearch='Off', max_results=1
+                                query, region='wt-wt', safesearch='Off', max_results=count
                             ))
                     elif hasattr(ddgs, "image"):
-                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=1))
+                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=count))
                     else:
-                        return None, "Duck image search method unavailable."
+                        return [], "Duck image search method unavailable."
                 if hits:
-                    url = hits[0].get('image') or hits[0].get('thumbnail') or hits[0].get('url')
-                    if url:
-                        return url, None
+                    urls = []
+                    for hit in hits:
+                        url = hit.get('image') or hit.get('thumbnail') or hit.get('url')
+                        if url:
+                            urls.append(url)
+                    if urls:
+                        return urls, None
                 # no hits but no error either — try next backend
                 break
             except Exception as e:
@@ -183,7 +186,7 @@ def search_image_ddg(query, retries=2, delay=2):
                     time.sleep(delay * (attempt + 1))  # backoff before retry on same backend
                     continue
                 break  # non-ratelimit error, move to next backend
-    return None, f"Duck image search error: {last_error}"
+    return [], f"Duck image search error: {last_error}"
 
 
 # 💡 Web/Image triggers
@@ -201,13 +204,14 @@ def handle_triggered_response(text):
         except Exception as e:
             return f"❌ DuckDuckGo search mein error: {e}"
 
-    # Prefix img/: try DuckDuckGo/ddgs first, then Bing provider as fallback
+    # Prefix img/: try DuckDuckGo/ddgs first (up to 7 pics), then Bing provider as fallback
     elif text.startswith("img/ "):
         prompt = text[5:].strip()
 
-        url, error = search_image_ddg(prompt)
-        if url:
-            return f"🖼️ DuckDuckGo se image:\n\n![image]({url})"
+        urls, error = search_image_ddg(prompt)
+        if urls:
+            gallery = "\n\n".join(f"![image]({u})" for u in urls)
+            return f"🖼️ DuckDuckGo se {len(urls)} images:\n\n{gallery}"
 
         if bing:
             try:
@@ -258,3 +262,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+

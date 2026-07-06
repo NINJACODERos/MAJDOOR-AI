@@ -5,3 +5,4 @@ beautifulsoup4
 pillow
 aiohttp
 requests
+ddgs>=9.0

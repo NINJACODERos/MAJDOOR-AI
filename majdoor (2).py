@@ -189,10 +189,24 @@ def search_image_ddg(query, retries=2, delay=2):
 
 
 # 👁️ Vision: read handwriting/diagrams from an uploaded/captured photo
+def get_vision_provider():
+    """Try known vision-capable g4f providers in order; return first one that exists."""
+    candidate_names = ["Blackbox", "blackbox", "ApiAirforce", "Copilot", "HuggingSpace"]
+    for name in candidate_names:
+        provider = getattr(g4f.Provider, name, None)
+        if provider is not None:
+            return provider
+    return None
+
+
 def analyze_image(image_file, question):
+    provider = get_vision_provider()
+    if provider is None:
+        return ("❌ Is g4f version mein koi vision-capable provider nahi mila. "
+                "requirements.txt mein g4f ko upgrade karo (pip install -U g4f[image]).")
     try:
         images = [[image_file, "photo.jpg"]]
-        client = g4f.Client(provider=g4f.Provider.Blackbox)
+        client = g4f.Client(provider=provider)
         result = client.chat.completions.create(
             [{"content": question, "role": "user"}],
             "",

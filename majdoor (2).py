@@ -190,8 +190,8 @@ def search_image_ddg(query, retries=2, delay=2):
 
 # 👁️ Vision: read handwriting/diagrams from an uploaded/captured photo
 def get_vision_provider():
-    """Try known vision-capable g4f providers in order; return first one that exists."""
-    candidate_names = ["Blackbox", "blackbox", "ApiAirforce", "Copilot", "HuggingSpace"]
+    """Blackbox is g4f's confirmed no-auth vision-capable provider; fall back to others if missing."""
+    candidate_names = ["Blackbox", "blackbox", "Copilot", "HuggingSpace"]
     for name in candidate_names:
         provider = getattr(g4f.Provider, name, None)
         if provider is not None:
@@ -205,12 +205,12 @@ def analyze_image(image_file, question):
         return ("❌ Is g4f version mein koi vision-capable provider nahi mila. "
                 "requirements.txt mein g4f ko upgrade karo (pip install -U g4f[image]).")
     try:
-        images = [[image_file, "photo.jpg"]]
+        image_bytes = image_file.getvalue() if hasattr(image_file, "getvalue") else image_file.read()
         client = g4f.Client(provider=provider)
         result = client.chat.completions.create(
-            [{"content": question, "role": "user"}],
-            "",
-            images=images
+            model=g4f.models.default,
+            messages=[{"role": "user", "content": question}],
+            image=image_bytes
         )
         answer = result.choices[0].message.content
         return strip_reasoning(answer)

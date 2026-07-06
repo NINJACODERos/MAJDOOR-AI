@@ -1,6 +1,5 @@
 streamlit
 g4f
-duckduckgo-search
 beautifulsoup4
 pillow
 aiohttp

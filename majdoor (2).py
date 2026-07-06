@@ -24,7 +24,7 @@ except ImportError:
 
     def search(query):
         with DDGS() as ddgs:
-            items = list(ddgs.text(query, region='us', safesearch='off', max_results=1))
+            items = list(ddgs.text(query, region='wt-wt', safesearch='off', max_results=1))
         return items[0].get('body') if items else "Kuch bhi nahi mila duck se bhai."
 
 # For image generation via g4f.Provider.bing if available
@@ -157,7 +157,7 @@ def search_image_ddg(query, retries=2, delay=2, count=7):
                     if hasattr(ddgs, "images"):
                         try:
                             hits = list(ddgs.images(
-                                query, region='us', safesearch='off',
+                                query, region='wt-wt', safesearch='off',
                                 max_results=count, backend=backend
                             ))
                         except TypeError:

@@ -157,8 +157,8 @@ def search_image_ddg(query, retries=2, delay=2, count=7):
                     if hasattr(ddgs, "images"):
                         try:
                             hits = list(ddgs.images(
-                                query, region='wt-wt', safesearch='off',
-                                max_results=count, backend=backend
+                               keyword=query, region='wt-wt', safesearch='off',
+                                max_results=count, 
                             ))
                         except TypeError:
                             # Installed ddgs/duckduckgo_search version doesn't

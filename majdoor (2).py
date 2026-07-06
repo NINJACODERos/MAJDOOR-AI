@@ -1,8 +1,17 @@
 import sys, os, re, time, streamlit as st
 
+# 🔧 Point g4f's cookie/HAR storage at a writable directory (Streamlit Cloud's
+# filesystem is ephemeral/restricted, so g4f's default path can fail).
+os.environ.setdefault("G4F_COOKIES_DIR", "/tmp/g4f_har_and_cookies")
+os.makedirs(os.environ["G4F_COOKIES_DIR"], exist_ok=True)
+
 # Adjust path to your local gpt4free clone
 sys.path.append(os.path.abspath("../gpt4free"))
 import g4f
+try:
+    g4f.cookies_dir = os.environ["G4F_COOKIES_DIR"]
+except Exception:
+    pass
 
 # 🔧 Fallback for search: try g4f.internet.search, else use DuckDuckGo/ddgs
 try:
@@ -189,33 +198,41 @@ def search_image_ddg(query, retries=2, delay=2):
 
 
 # 👁️ Vision: read handwriting/diagrams from an uploaded/captured photo
-def get_vision_provider():
-    """Blackbox is g4f's confirmed no-auth vision-capable provider; fall back to others if missing."""
+def get_vision_providers():
+    """Blackbox is g4f's confirmed no-auth vision-capable provider; list others as fallback."""
     candidate_names = ["Blackbox", "blackbox", "Copilot", "HuggingSpace"]
+    providers = []
     for name in candidate_names:
         provider = getattr(g4f.Provider, name, None)
         if provider is not None:
-            return provider
-    return None
+            providers.append(provider)
+    return providers
 
 
 def analyze_image(image_file, question):
-    provider = get_vision_provider()
-    if provider is None:
+    providers = get_vision_providers()
+    if not providers:
         return ("❌ Is g4f version mein koi vision-capable provider nahi mila. "
                 "requirements.txt mein g4f ko upgrade karo (pip install -U g4f[image]).")
-    try:
-        image_bytes = image_file.getvalue() if hasattr(image_file, "getvalue") else image_file.read()
-        client = g4f.Client(provider=provider)
-        result = client.chat.completions.create(
-            model=g4f.models.default,
-            messages=[{"role": "user", "content": question}],
-            image=image_bytes
-        )
-        answer = result.choices[0].message.content
-        return strip_reasoning(answer)
-    except Exception as e:
-        return f"❌ Photo padhne mein dikkat aa gayi: {e}"
+
+    image_bytes = image_file.getvalue() if hasattr(image_file, "getvalue") else image_file.read()
+    last_error = None
+
+    for provider in providers:
+        try:
+            client = g4f.Client(provider=provider)
+            result = client.chat.completions.create(
+                model=g4f.models.default,
+                messages=[{"role": "user", "content": question}],
+                image=image_bytes
+            )
+            answer = result.choices[0].message.content
+            return strip_reasoning(answer)
+        except Exception as e:
+            last_error = e
+            continue  # try next provider
+
+    return f"❌ Photo padhne mein dikkat aa gayi: {last_error}"
 
 
 # 💡 Web/Image triggers

@@ -8,4 +8,4 @@ ddgs
 g4f[image]
 duckduckai
 duck-chat
-duckduckgo_search
+DDGS

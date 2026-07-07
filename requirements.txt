@@ -6,5 +6,4 @@ aiohttp
 requests
 ddgs>=9.6.0
 g4f[image]
-
-duckai
+duckai==0.3.1

@@ -1,5 +1,5 @@
 streamlit
-g4f
+g4f==v7.7.0
 beautifulsoup4
 pillow
 aiohttp

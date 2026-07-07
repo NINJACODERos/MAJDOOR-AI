@@ -1,3 +1,4 @@
+
 import sys, os, re, time, streamlit as st
 
 # 🔧 Point g4f's cookie/HAR storage at a writable directory (Streamlit Cloud's
@@ -40,6 +41,15 @@ try:
     from duckduckai import ask as duckai_ask
 except ImportError:
     duckai_ask = None
+
+# duck_chat as a second option — async client, tried if duckduckai's token
+# fetch fails (different internal implementation, may succeed where the
+# other doesn't).
+try:
+    import asyncio
+    from duck_chat import DuckChat
+except ImportError:
+    DuckChat = None
 
 # 🔧 Initial Setup
 st.set_page_config(page_title="MAJDOOR_AI", layout="centered")
@@ -212,18 +222,33 @@ def handle_triggered_response(text):
         except Exception as e:
             return f"❌ DuckDuckGo search mein error: {e}"
 
-    # Prefix duck/: use Duck.ai text chat (via DuckDuckAI package, no API key needed)
+    # Prefix duck/: use Duck.ai text chat — try duckduckai first, fall back
+    # to duck_chat (different internal token-handling) if that fails.
     elif text.startswith("duck/ "):
         query = text[6:].strip()
-        if duckai_ask is None:
-            return "❌ duckduckai package installed nahi hai. requirements.txt mein 'duckduckai' add karo."
-        try:
-            result = duckai_ask(query, stream=False)
-            if result and str(result).strip():
-                return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(str(result))} 😤"
-            return "❌ Duck.ai ne khaali jawab diya."
-        except Exception as e:
-            return f"❌ Duck.ai mein error: {e}"
+
+        # Attempt 1: duckduckai
+        if duckai_ask is not None:
+            try:
+                result = duckai_ask(query, stream=False)
+                if result and str(result).strip():
+                    return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(str(result))} 😤"
+            except Exception:
+                pass  # fall through to duck_chat
+
+        # Attempt 2: duck_chat (async client, different token mechanism)
+        if DuckChat is not None:
+            try:
+                async def _ask():
+                    async with DuckChat() as chat:
+                        return await chat.ask_question(query)
+                result = asyncio.run(_ask())
+                if result and str(result).strip():
+                    return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(str(result))} 😤"
+            except Exception as e:
+                return f"❌ Duck.ai mein error (dono tareeke fail): {e}"
+
+        return "❌ Duck.ai packages installed nahi hain. requirements.txt mein 'duckduckai' aur 'duck-chat' add karo."
 
     # Prefix img/: try DuckDuckGo/ddgs first (up to 7 pics), then Bing provider as fallback
     elif text.startswith("img/ "):

@@ -7,3 +7,4 @@ requests
 ddgs>=9.6.0
 g4f[image]
 duckduckai
+duck-chat

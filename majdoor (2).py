@@ -24,7 +24,7 @@ except ImportError:
 
     def search(query):
         with DDGS() as ddgs:
-            items = list(ddgs.text(query, region='wt-wt', safesearch='off', max_results=1))
+            items = list(ddgs.text(query, region='en', safesearch='off', max_results=1))
         return items[0].get('body') if items else "Kuch bhi nahi mila duck se bhai."
 
 # For image generation via g4f.Provider.bing if available
@@ -157,17 +157,17 @@ def search_image_ddg(query, retries=2, delay=2, count=7):
                     if hasattr(ddgs, "images"):
                         try:
                             hits = list(ddgs.images(
-                               keyword=query, region='wt-wt', safesearch='off',
+                               keyword=query, region='en', safesearch='off',
                                 max_results=count, 
                             ))
                         except TypeError:
                             # Installed ddgs/duckduckgo_search version doesn't
                             # support the backend= param — call without it.
                             hits = list(ddgs.images(
-                                query, region='wt-wt', safesearch='off', max_results=count
+                                query, region='en', safesearch='off', max_results=count
                             ))
                     elif hasattr(ddgs, "image"):
-                        hits = list(ddgs.image(query, region='wt-wt', safesearch='off', max_results=count))
+                        hits = list(ddgs.image(query, region='en', safesearch='off', max_results=count))
                     else:
                         return [], "Duck image search method unavailable."
                 if hits:

@@ -4,7 +4,7 @@ beautifulsoup4
 pillow
 aiohttp
 requests
-ddgs>=9.6.0
+ddgs
 g4f[image]
 duckduckai
 duck-chat

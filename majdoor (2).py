@@ -1,3 +1,4 @@
+
 import sys, os, streamlit as st
 import time
 
@@ -39,14 +40,25 @@ def search_image_ddg(query, retries=3, delay=4, count=7):
                     hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=count))
                 else:
                     hits = []
+            # DEBUG: print raw hits to the Streamlit Cloud logs so we can see
+            # the actual keys returned if extraction below comes up empty.
+            print(f"[search_image_ddg] raw hits (first item): {hits[0] if hits else 'NO HITS'}")
             results = []
             for h in hits:
-                # try common keys used by ddgs results
-                url = h.get('image') or h.get('thumbnail') or h.get('url') or h.get('src')
+                if not isinstance(h, dict):
+                    continue
+                # try common keys used by ddgs/duckduckgo_search results across versions
+                url = (
+                    h.get('image') or h.get('thumbnail') or h.get('url')
+                    or h.get('src') or h.get('Image') or h.get('ImageUrl')
+                    or h.get('original') or h.get('img_url')
+                )
                 if url:
                     results.append(url)
                 if len(results) >= count:
                     break
+            if not results and hits:
+                print(f"[search_image_ddg] got {len(hits)} hits but couldn't extract URLs, keys were: {list(hits[0].keys()) if isinstance(hits[0], dict) else type(hits[0])}")
             return results
         except Exception as e:
             attempt += 1

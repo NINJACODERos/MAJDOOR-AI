@@ -24,7 +24,7 @@ except ImportError:
 
     def search(query):
         with DDGS() as ddgs:
-            items = list(ddgs.text(query, region='en', safesearch='off', max_results=1))
+            items = list(ddgs.text(query, region='wt-wt', safesearch='Off', max_results=1))
         return items[0].get('body') if items else "Kuch bhi nahi mila duck se bhai."
 
 # For image generation via g4f.Provider.bing if available
@@ -32,6 +32,12 @@ try:
     from g4f.Provider import bing
 except ImportError:
     bing = None
+
+# 🦆 Duck.ai text chat (duck/ prefix) — alongside g4f, doesn't replace it
+try:
+    from duckai import DuckAI
+except ImportError:
+    DuckAI = None
 
 # 🔧 Initial Setup
 st.set_page_config(page_title="MAJDOOR_AI", layout="centered")
@@ -157,17 +163,17 @@ def search_image_ddg(query, retries=2, delay=2, count=7):
                     if hasattr(ddgs, "images"):
                         try:
                             hits = list(ddgs.images(
-                               keyword=query, region='en', safesearch='off',
-                                max_results=count, 
+                                query, region='wt-wt', safesearch='Off',
+                                max_results=count, backend=backend
                             ))
                         except TypeError:
                             # Installed ddgs/duckduckgo_search version doesn't
                             # support the backend= param — call without it.
                             hits = list(ddgs.images(
-                                query, region='en', safesearch='off', max_results=count
+                                query, region='wt-wt', safesearch='Off', max_results=count
                             ))
                     elif hasattr(ddgs, "image"):
-                        hits = list(ddgs.image(query, region='en', safesearch='off', max_results=count))
+                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=count))
                     else:
                         return [], "Duck image search method unavailable."
                 if hits:
@@ -195,7 +201,7 @@ def handle_triggered_response(text):
     if text.startswith("dd/ "):
         try:
             with DDGS() as ddgs:
-                items = list(ddgs.text(text[4:].strip(), region='us', safesearch='off', max_results=1))
+                items = list(ddgs.text(text[4:].strip(), region='wt-wt', safesearch='Off', max_results=1))
             if items:
                 body = items[0].get('body') or items[0].get('title') or "Kuch bhi nahi mila duck se."
                 return f"🌐 DuckDuckGo se mila jawab:\n\n👉 {body} 😤"
@@ -203,6 +209,19 @@ def handle_triggered_response(text):
                 return "❌ DuckDuckGo ne kuch nahi diya."
         except Exception as e:
             return f"❌ DuckDuckGo search mein error: {e}"
+
+    # Prefix duck/: use Duck.ai text chat (via duckai package, no API key needed)
+    elif text.startswith("duck/ "):
+        query = text[6:].strip()
+        if DuckAI is None:
+            return "❌ duckai package installed nahi hai. requirements.txt mein 'duckai' add karo."
+        try:
+            result = DuckAI().chat(query, model="claude-3-haiku")
+            if result and result.strip():
+                return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(result)} 😤"
+            return "❌ Duck.ai ne khaali jawab diya."
+        except Exception as e:
+            return f"❌ Duck.ai mein error: {e}"
 
     # Prefix img/: try DuckDuckGo/ddgs first (up to 7 pics), then Bing provider as fallback
     elif text.startswith("img/ "):
@@ -261,5 +280,5 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True
-)
-
+                        )
+    

@@ -1,4 +1,3 @@
-
 import sys, os, re, time, streamlit as st
 
 # 🔧 Point g4f's cookie/HAR storage at a writable directory (Streamlit Cloud's
@@ -35,10 +34,12 @@ except ImportError:
     bing = None
 
 # 🦆 Duck.ai text chat (duck/ prefix) — alongside g4f, doesn't replace it
+# Using DuckDuckAI (pure-Python package) instead of duckai, since duckai only
+# ships compiled wheels for Python 3.11-3.13 and fails to install on 3.14+.
 try:
-    from duckai import DuckAI
+    from duckduckai import ask as duckai_ask
 except ImportError:
-    DuckAI = None
+    duckai_ask = None
 
 # 🔧 Initial Setup
 st.set_page_config(page_title="MAJDOOR_AI", layout="centered")
@@ -211,15 +212,15 @@ def handle_triggered_response(text):
         except Exception as e:
             return f"❌ DuckDuckGo search mein error: {e}"
 
-    # Prefix duck/: use Duck.ai text chat (via duckai package, no API key needed)
+    # Prefix duck/: use Duck.ai text chat (via DuckDuckAI package, no API key needed)
     elif text.startswith("duck/ "):
         query = text[6:].strip()
-        if DuckAI is None:
-            return "❌ duckai package installed nahi hai. requirements.txt mein 'duckai' add karo."
+        if duckai_ask is None:
+            return "❌ duckduckai package installed nahi hai. requirements.txt mein 'duckduckai' add karo."
         try:
-            result = DuckAI().chat(query, model="claude-3-haiku")
-            if result and result.strip():
-                return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(result)} 😤"
+            result = duckai_ask(query, stream=False)
+            if result and str(result).strip():
+                return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(str(result))} 😤"
             return "❌ Duck.ai ne khaali jawab diya."
         except Exception as e:
             return f"❌ Duck.ai mein error: {e}"

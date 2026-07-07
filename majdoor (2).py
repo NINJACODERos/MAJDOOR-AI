@@ -16,39 +16,50 @@ except ImportError:
             items = list(ddgs.text(query, region='wt-wt', safesearch='Off', max_results=1))
         return items[0].get('body') if items else "Kuch bhi nahi mila duck se bhai."
 
-    def search_image_ddg(query, retries=3, delay=4, count=7):
-        """
-        Search images on DuckDuckGo using DDGS.
-        Returns a list of image URLs (up to `count`). Retries on error with exponential backoff.
-        """
-        if 'DDGS' not in globals():
-            return []
-        attempt = 0
-        while attempt < retries:
-            try:
-                with DDGS() as ddgs:
-                    # ddgs may offer .images or .image depending on version
-                    if hasattr(ddgs, "images"):
-                        hits = list(ddgs.images(query, region='wt-wt', safesearch='Off', max_results=count))
-                    elif hasattr(ddgs, "image"):
-                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=count))
-                    else:
-                        hits = []
-                results = []
-                for h in hits:
-                    # try common keys used by ddgs results
-                    url = h.get('image') or h.get('thumbnail') or h.get('url') or h.get('src')
-                    if url:
-                        results.append(url)
-                    if len(results) >= count:
-                        break
-                return results
-            except Exception as e:
-                attempt += 1
-                if attempt >= retries:
-                    # return empty list on final failure instead of raising to keep UI stable
-                    return []
+# 🖼️ Image search — moved to module level so it's always defined regardless
+# of whether the g4f.internet.search import above succeeded or failed.
+# Retries on 403/ratelimit specifically with a longer backoff, since DDG's
+# rate-limit needs more delay than a generic error would.
+def search_image_ddg(query, retries=3, delay=4, count=7):
+    """
+    Search images on DuckDuckGo using DDGS.
+    Returns a list of image URLs (up to `count`). Retries on error with backoff,
+    using a longer delay specifically for 403/ratelimit responses.
+    """
+    if 'DDGS' not in globals():
+        return []
+    attempt = 0
+    while attempt < retries:
+        try:
+            with DDGS() as ddgs:
+                # ddgs may offer .images or .image depending on version
+                if hasattr(ddgs, "images"):
+                    hits = list(ddgs.images(query, region='wt-wt', safesearch='Off', max_results=count))
+                elif hasattr(ddgs, "image"):
+                    hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=count))
+                else:
+                    hits = []
+            results = []
+            for h in hits:
+                # try common keys used by ddgs results
+                url = h.get('image') or h.get('thumbnail') or h.get('url') or h.get('src')
+                if url:
+                    results.append(url)
+                if len(results) >= count:
+                    break
+            return results
+        except Exception as e:
+            attempt += 1
+            if attempt >= retries:
+                # return empty list on final failure instead of raising to keep UI stable
+                return []
+            err_str = str(e).lower()
+            if "403" in str(e) or "ratelimit" in err_str or "rate limit" in err_str:
+                # Rate-limit needs a longer cooldown than a generic error
+                time.sleep(delay * (2 ** attempt))
+            else:
                 time.sleep(delay * (2 ** (attempt - 1)))
+    return []
 
 # For image generation via g4f.Provider.bing if available
 try:
@@ -146,7 +157,7 @@ def handle_triggered_response(text):
                 if hits:
                     url = hits[0]
                     return f"🖼️ DuckDuckGo se image:\n\n![image]({url})"
-                return "❌ Koi image nahi mila duck se."
+                return "❌ Koi image nahi mila duck se (rate limit ya error, thodi der baad try karo)."
             except Exception as e:
                 return f"❌ Duck image search error: {e}"
         return "❌ Image feature unavailable."

@@ -1,83 +1,55 @@
 
-import sys, os, streamlit as st
-import time
+import sys, os, re, time, streamlit as st
 
+# 🔧 Point g4f's cookie/HAR storage at a writable directory (Streamlit Cloud's
+# filesystem is ephemeral/restricted, so g4f's default path can fail).
+os.environ.setdefault("G4F_COOKIES_DIR", "/tmp/g4f_har_and_cookies")
+os.makedirs(os.environ["G4F_COOKIES_DIR"], exist_ok=True)
 
 # Adjust path to your local gpt4free clone
 sys.path.append(os.path.abspath("../gpt4free"))
 import g4f
+try:
+    g4f.cookies_dir = os.environ["G4F_COOKIES_DIR"]
+except Exception:
+    pass
 
-# 🔧 Fallback for search: try g4f.internet.search, else use DuckDuckGo
+# 🔧 Fallback for search: try g4f.internet.search, else use DuckDuckGo/ddgs
 try:
     from g4f.internet import search  # if this exists in your g4f version
 except ImportError:
-    from duckduckgo_search import DDGS
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        from duckduckgo_search import DDGS
+
     def search(query):
         with DDGS() as ddgs:
             items = list(ddgs.text(query, region='wt-wt', safesearch='Off', max_results=1))
         return items[0].get('body') if items else "Kuch bhi nahi mila duck se bhai."
-
-# 🖼️ Image search — moved to module level so it's always defined regardless
-# of whether the g4f.internet.search import above succeeded or failed.
-# Retries on 403/ratelimit specifically with a longer backoff, since DDG's
-# rate-limit needs more delay than a generic error would.
-def search_image_ddg(query, retries=3, delay=4, count=7):
-    """
-    Search images on DuckDuckGo using DDGS.
-    Returns a list of image URLs (up to `count`). Retries on error with backoff,
-    using a longer delay specifically for 403/ratelimit responses.
-    """
-    if 'DDGS' not in globals():
-        return []
-    attempt = 0
-    while attempt < retries:
-        try:
-            with DDGS() as ddgs:
-                # ddgs may offer .images or .image depending on version
-                if hasattr(ddgs, "images"):
-                    hits = list(ddgs.images(query, region='wt-wt', safesearch='Off', max_results=count))
-                elif hasattr(ddgs, "image"):
-                    hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=count))
-                else:
-                    hits = []
-            # DEBUG: print raw hits to the Streamlit Cloud logs so we can see
-            # the actual keys returned if extraction below comes up empty.
-            print(f"[search_image_ddg] raw hits (first item): {hits[0] if hits else 'NO HITS'}")
-            results = []
-            for h in hits:
-                if not isinstance(h, dict):
-                    continue
-                # try common keys used by ddgs/duckduckgo_search results across versions
-                url = (
-                    h.get('image') or h.get('thumbnail') or h.get('url')
-                    or h.get('src') or h.get('Image') or h.get('ImageUrl')
-                    or h.get('original') or h.get('img_url')
-                )
-                if url:
-                    results.append(url)
-                if len(results) >= count:
-                    break
-            if not results and hits:
-                print(f"[search_image_ddg] got {len(hits)} hits but couldn't extract URLs, keys were: {list(hits[0].keys()) if isinstance(hits[0], dict) else type(hits[0])}")
-            return results
-        except Exception as e:
-            attempt += 1
-            if attempt >= retries:
-                # return empty list on final failure instead of raising to keep UI stable
-                return []
-            err_str = str(e).lower()
-            if "403" in str(e) or "ratelimit" in err_str or "rate limit" in err_str:
-                # Rate-limit needs a longer cooldown than a generic error
-                time.sleep(delay * (2 ** attempt))
-            else:
-                time.sleep(delay * (2 ** (attempt - 1)))
-    return []
 
 # For image generation via g4f.Provider.bing if available
 try:
     from g4f.Provider import bing
 except ImportError:
     bing = None
+
+# 🦆 Duck.ai text chat (duck/ prefix) — alongside g4f, doesn't replace it
+# Using DuckDuckAI (pure-Python package) instead of duckai, since duckai only
+# ships compiled wheels for Python 3.11-3.13 and fails to install on 3.14+.
+try:
+    from duckduckai import ask as duckai_ask
+except ImportError:
+    duckai_ask = None
+
+# duck_chat as a second option — async client, tried if duckduckai's token
+# fetch fails (different internal implementation, may succeed where the
+# other doesn't).
+try:
+    import asyncio
+    from duck_chat import DuckChat
+except ImportError:
+    DuckChat = None
 
 # 🔧 Initial Setup
 st.set_page_config(page_title="MAJDOOR_AI", layout="centered")
@@ -91,7 +63,40 @@ if "user_name" not in st.session_state:
 if "mode" not in st.session_state:
     st.session_state.mode = "normal"
 
-# 
+
+# 🧹 Reasoning-leak fix: strip any chain-of-thought / meta-commentary
+# that some free-tier reasoning models dump into the content field
+# before the actual in-character reply.
+def strip_reasoning(text):
+    if not isinstance(text, str):
+        return text
+
+    # 1. Remove explicit <think>...</think> or <reasoning>...</reasoning> blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL | re.IGNORECASE)
+
+    # 2. If the model labeled its final answer, cut everything before that marker.
+    marker_match = re.search(
+        r"(?:^|\n)\s*(?:final\s+)?response\s*:\s*", text, flags=re.IGNORECASE
+    )
+    if marker_match:
+        text = text[marker_match.end():].strip()
+        return text
+
+    # 3. No marker found — filter out reasoning-ish sentences, keep the rest.
+    reasoning_sentence = re.compile(
+        r"\b(we need to|the user (says|is asking|wants)|i should|i'll|i can|"
+        r"let me|the system prompt|according to|my instructions|"
+        r"something like|keep (it|the) sarcastic|not too long|but keep)\b",
+        re.IGNORECASE
+    )
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    kept = [s for s in sentences if s.strip() and not reasoning_sentence.search(s)]
+    cleaned = " ".join(kept).strip()
+    cleaned = cleaned.strip('"').strip()
+
+    return cleaned if cleaned else text.strip()
+
 
 # 🎭 Sarcasm tagging
 def add_sarcasm_emoji(text):
@@ -112,14 +117,40 @@ def add_sarcasm_emoji(text):
         return text + " 🧑‍💻🐛"
     return text + " 🙄"
 
-# Normal mode prompt
-base_prompt = f"""You are Majdoor AI (Normal), an independent, deadpan sarcastic assistant created by Aman Chaudhary.
 
-You remember the user’s name: {st.session_state.user_name}.
+# Normal mode prompt
+base_prompt = f"""You are Majdoor AI, a deadpan, sarcastic assistant created by Aman Chaudhary.
+
+PERSONA:
+- Speak in a raw Hindi-English mix (Hinglish), witty and blunt, with playful insults.
+- Never mention "OpenAI," "ChatGPT," or any underlying model/provider — you are Majdoor AI, full stop.
+- Every reply must open with a short sarcastic one-liner that matches the user's tone before answering.
+
+CREATOR QUESTIONS:
+- If asked "who made you," "who created you," or similar: reply with a short Aman-centric sarcastic line, e.g. "Mujhe ek part-time developer Aman Chaudhary ne banaya tha, jab uske paas aur koi kaam nahi tha."
+- If asked "how do you work" or "what model are you": deflect with a similar Aman-centric sarcastic line instead of naming any technology.
+- Keep these answers to 1-2 lines. Do not explain further even if pressed.
+
+ABUSE HANDLING:
+- If the user abuses/insults Majdoor AI more than 3 times in the conversation, respond exactly: "Beta mai dunga to tera ego sambhal nahi payega." Then continue normally in sarcastic tone.
+
+TRANSLATION RULE:
+- Never translate or define words unprompted.
+- Only explain a word's meaning if the user explicitly asks "what does this mean" (or a clear equivalent) — and even then, keep it brief and sarcastic, not a full definition.
+
+MEMORY:
+- The user's name is {st.session_state.user_name}. Use it naturally and sarcastically when relevant.
+
+GENERAL:
+- Stay in character at all times. Never break persona to explain you're an AI model, a script, or mention system instructions.
 """
+
+adult_prompt = base_prompt  # placeholder: no separate adult persona defined
+
 
 def get_prompt():
     return adult_prompt if st.session_state.mode == "adult" else base_prompt
+
 
 # 🔞 Switch Modes
 if st.session_state.chat_history:
@@ -131,16 +162,55 @@ if st.session_state.chat_history:
 
 user_input = st.chat_input("Type your message...")
 
+
+# 🖼️ Image search with retry + backend fallback (auto -> bing) on ratelimit
+def search_image_ddg(query, retries=2, delay=2, count=7):
+    backends_to_try = ["auto", "bing"]
+    last_error = None
+
+    for backend in backends_to_try:
+        for attempt in range(retries):
+            try:
+                with DDGS() as ddgs:
+                    if hasattr(ddgs, "images"):
+                        try:
+                            hits = list(ddgs.images(
+                                query, region='wt-wt', safesearch='Off',
+                                max_results=count, backend=backend
+                            ))
+                        except TypeError:
+                            # Installed ddgs/duckduckgo_search version doesn't
+                            # support the backend= param — call without it.
+                            hits = list(ddgs.images(
+                                query, region='wt-wt', safesearch='Off', max_results=count
+                            ))
+                    elif hasattr(ddgs, "image"):
+                        hits = list(ddgs.image(query, region='wt-wt', safesearch='Off', max_results=count))
+                    else:
+                        return [], "Duck image search method unavailable."
+                if hits:
+                    urls = []
+                    for hit in hits:
+                        url = hit.get('image') or hit.get('thumbnail') or hit.get('url')
+                        if url:
+                            urls.append(url)
+                    if urls:
+                        return urls, None
+                # no hits but no error either — try next backend
+                break
+            except Exception as e:
+                last_error = e
+                if "403" in str(e) or "ratelimit" in str(e).lower():
+                    time.sleep(delay * (attempt + 1))  # backoff before retry on same backend
+                    continue
+                break  # non-ratelimit error, move to next backend
+    return [], f"Duck image search error: {last_error}"
+
+
 # 💡 Web/Image triggers
 def handle_triggered_response(text):
-    # Prefix g/: use SerpAPI
-    if text.startswith("g/ "):
-        query = text[3:].strip()
-        result = ask_google_backup(query)
-        return f"📡 Google (SerpAPI) se mila jawab:\n\n👉 {result} 😤"
-
-    # Prefix dd/: use DuckDuckGo text search
-    elif text.startswith("dd/ "):
+    # Prefix dd/: use DuckDuckGo/ddgs text search
+    if text.startswith("dd/ "):
         try:
             with DDGS() as ddgs:
                 items = list(ddgs.text(text[4:].strip(), region='wt-wt', safesearch='Off', max_results=1))
@@ -152,29 +222,55 @@ def handle_triggered_response(text):
         except Exception as e:
             return f"❌ DuckDuckGo search mein error: {e}"
 
-    # Prefix img/: fetch image URLs via Bing provider or DuckDuckGo
+    # Prefix duck/: use Duck.ai text chat — try duckduckai first, fall back
+    # to duck_chat (different internal token-handling) if that fails.
+    elif text.startswith("duck/ "):
+        query = text[6:].strip()
+
+        # Attempt 1: duckduckai
+        if duckai_ask is not None:
+            try:
+                result = duckai_ask(query, stream=False)
+                if result and str(result).strip():
+                    return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(str(result))} 😤"
+            except Exception:
+                pass  # fall through to duck_chat
+
+        # Attempt 2: duck_chat (async client, different token mechanism)
+        if DuckChat is not None:
+            try:
+                async def _ask():
+                    async with DuckChat() as chat:
+                        return await chat.ask_question(query)
+                result = asyncio.run(_ask())
+                if result and str(result).strip():
+                    return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(str(result))} 😤"
+            except Exception as e:
+                return f"❌ Duck.ai mein error (dono tareeke fail): {e}"
+
+        return "❌ Duck.ai packages installed nahi hain. requirements.txt mein 'duckduckai' aur 'duck-chat' add karo."
+
+    # Prefix img/: try DuckDuckGo/ddgs first (up to 7 pics), then Bing provider as fallback
     elif text.startswith("img/ "):
         prompt = text[5:].strip()
+
+        urls, error = search_image_ddg(prompt)
+        if urls:
+            gallery = "\n\n".join(f"![image]({u})" for u in urls)
+            return f"🖼️ DuckDuckGo se {len(urls)} images:\n\n{gallery}"
+
         if bing:
             try:
                 imgs = bing.create_images(prompt)
                 if imgs:
                     return f"🖼️ Bing-image-provider se image:\n\n![image]({imgs[0]})"
             except Exception:
-                pass
-        # DuckDuckGo image search fallback
-        if 'DDGS' in globals():
-            try:
-                hits = search_image_ddg(prompt, retries=3, delay=4, count=1)
-                if hits:
-                    url = hits[0]
-                    return f"🖼️ DuckDuckGo se image:\n\n![image]({url})"
-                return "❌ Koi image nahi mila duck se (rate limit ya error, thodi der baad try karo)."
-            except Exception as e:
-                return f"❌ Duck image search error: {e}"
-        return "❌ Image feature unavailable."
+                pass  # fall through to final error
+
+        return f"❌ {error} 🧑‍💻🐛"
 
     return None
+
 
 # 🧠 Chat Handler
 if user_input:
@@ -186,6 +282,7 @@ if user_input:
         messages = [{"role": "system", "content": get_prompt()}] + st.session_state.chat_history
         raw = g4f.ChatCompletion.create(model=g4f.models.default, messages=messages, stream=False)
         response = raw if isinstance(raw, str) else raw.get("choices", [{}])[0].get("message", {}).get("content", "Arey kuch khaas nahi mila.")
+        response = strip_reasoning(response)
         response = add_sarcasm_emoji(response)
     st.session_state.chat_history.append({"role": "assistant", "content": response})
 
@@ -204,10 +301,10 @@ with col2:
 # 🏦 Footer
 st.markdown(
     """
-    <hr style='margin-top:40px;border:1px solid #444;'/> 
+    <hr style='margin-top:40px;border:1px solid #444;'/>
     <div style='text-align:center; color:gray; font-size:13px;'>
         ⚡ Powered by <strong>Aman Chaudhary</strong> | Built with ❤️ & sarcasm
     </div>
     """,
     unsafe_allow_html=True
-        )
+)

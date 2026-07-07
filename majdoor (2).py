@@ -1,3 +1,4 @@
+
 import sys, os, re, time, streamlit as st
 
 # 🔧 Point g4f's cookie/HAR storage at a writable directory (Streamlit Cloud's
@@ -280,5 +281,4 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True
-                        )
-    
+)

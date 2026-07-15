@@ -9,3 +9,4 @@ g4f[image]
 duckduckai
 duck-chat
 DDGS
+gTTS

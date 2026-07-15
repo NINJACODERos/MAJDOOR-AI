@@ -1,4 +1,4 @@
-import sys, os, re, time, streamlit as st
+import sys, os, re, time, io, streamlit as st
 
 # 🔧 Point g4f's cookie/HAR storage at a writable directory (Streamlit Cloud's
 # filesystem is ephemeral/restricted, so g4f's default path can fail).
@@ -12,6 +12,12 @@ try:
     g4f.cookies_dir = os.environ["G4F_COOKIES_DIR"]
 except Exception:
     pass
+
+# Import gTTS with fallback
+try:
+    from gtts import gTTS
+except ImportError:
+    gTTS = None
 
 # 🔧 Fallback for search: try g4f.internet.search, else use DuckDuckGo/ddgs
 try:
@@ -33,7 +39,7 @@ try:
 except ImportError:
     bing = None
 
-# 🦆 Duck.ai text chat (duck/ prefix) — alongside g4f, doesn't replace it
+# 🦆 Duck.ai text chat (duck/ prefix)
 try:
     from duckduckai import ask as duckai_ask
 except ImportError:
@@ -64,9 +70,11 @@ def strip_reasoning(text):
     if not isinstance(text, str):
         return text
 
+    # Remove explicit <think>...</think> or <reasoning>...</reasoning> blocks
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL | re.IGNORECASE)
 
+    # If the model labeled its final answer, cut everything before that marker.
     marker_match = re.search(
         r"(?:^|\n)\s*(?:final\s+)?response\s*:\s*", text, flags=re.IGNORECASE
     )
@@ -74,6 +82,7 @@ def strip_reasoning(text):
         text = text[marker_match.end():].strip()
         return text
 
+    # No marker found — filter out reasoning-ish sentences, keep the rest.
     reasoning_sentence = re.compile(
         r"\b(we need to|the user (says|is asking|wants)|i should|i'll|i can|"
         r"let me|the system prompt|according to|my instructions|"
@@ -195,44 +204,30 @@ def search_image_ddg(query, retries=2, delay=2, count=7):
 
 # 💡 Web/Image/Audio triggers
 def handle_triggered_response(text):
-    
-    # Prefix audio/: Generate Audio response exactly like g4f.dev
-    if text.startswith("audio/ "):
+    # Case-insensitive "audio/ " prefix handling
+    if text.lower().startswith("audio/ "):
         prompt = text[7:].strip()
         
-        # Ensure we only pass 'role' and 'content' avoiding any previous binary audio data
+        # Strip internal binary keys to keep the history context perfectly clean
         safe_history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_history if "content" in m]
         messages = [{"role": "system", "content": get_prompt()}] + safe_history + [{"role": "user", "content": prompt}]
         
         try:
-            # 1. Generate text
+            # 1. Generate text via standard g4f
             raw = g4f.ChatCompletion.create(model=g4f.models.default, messages=messages, stream=False)
             reply_text = raw if isinstance(raw, str) else raw.get("choices", [{}])[0].get("message", {}).get("content", "Arey kuch nahi mila.")
             reply_text = strip_reasoning(reply_text)
             
-            # 2. Fetch TTS audio via g4f Client
-            from g4f.client import Client
-            client = Client()
-            audio_response = client.audio.speech.create(
-                model="tts-1",
-                voice="alloy",
-                input=reply_text
-            )
+            # 2. Convert to Audio using robust gTTS
+            if gTTS is None:
+                return "❌ gTTS library missing hai. Please requirements.txt check karo!"
             
-            # Handle different byte return formats based on g4f version
-            audio_data = b""
-            if hasattr(audio_response, 'iter_bytes'):
-                for chunk in audio_response.iter_bytes():
-                    audio_data += chunk
-            elif hasattr(audio_response, 'content'):
-                audio_data = audio_response.content
-            elif hasattr(audio_response, 'read'):
-                audio_data = audio_response.read()
-            elif isinstance(audio_response, bytes):
-                audio_data = audio_response
-            else:
-                audio_data = bytes(audio_response)
+            tts = gTTS(text=reply_text, lang='hi', slow=False)
+            fp = io.BytesIO()
+            tts.write_to_fp(fp)
+            audio_data = fp.getvalue()
 
+            # Return both so we can display text + play the matching audio
             return {"text": reply_text, "audio": audio_data}
             
         except Exception as e:
@@ -299,7 +294,6 @@ if user_input:
     
     if trig:
         if isinstance(trig, dict) and "audio" in trig:
-            # Handle the new audio dictionary payload
             response_text = add_sarcasm_emoji(trig["text"])
             st.session_state.chat_history.append({
                 "role": "assistant", 
@@ -310,7 +304,7 @@ if user_input:
             response = add_sarcasm_emoji(trig)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
     else:
-        # Standard chat fallback (Ensure we strip out 'audio' keys from memory before passing)
+        # Filter audio keys out before feeding history context to g4f
         safe_history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_history if "content" in m]
         messages = [{"role": "system", "content": get_prompt()}] + safe_history
         raw = g4f.ChatCompletion.create(model=g4f.models.default, messages=messages, stream=False)
@@ -319,13 +313,13 @@ if user_input:
         response = add_sarcasm_emoji(response)
         st.session_state.chat_history.append({"role": "assistant", "content": response})
 
-# 💬 History Loop (Now checks for audio byte rendering)
+# 💬 History Loop (Both text and audio inside the exact same chat message bubble)
 for msg in st.session_state.chat_history:
     role = "🌼" if msg["role"] == "user" else "🌀"
-    st.chat_message(msg["role"], avatar=role).write(msg["content"])
-    # Render audio player immediately below the text if audio exists in this message block
-    if "audio" in msg and msg["audio"]:
-        st.audio(msg["audio"], format="audio/mp3")
+    with st.chat_message(msg["role"], avatar=role):
+        st.write(msg["content"])
+        if "audio" in msg and msg["audio"]:
+            st.audio(msg["audio"], format="audio/mp3")
 
 # 🪟 Clear
 col1, col2 = st.columns([6, 1])
@@ -343,4 +337,4 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True
-        )
+)

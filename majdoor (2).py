@@ -1,4 +1,3 @@
-
 import sys, os, re, time, streamlit as st
 
 # 🔧 Point g4f's cookie/HAR storage at a writable directory (Streamlit Cloud's
@@ -35,16 +34,12 @@ except ImportError:
     bing = None
 
 # 🦆 Duck.ai text chat (duck/ prefix) — alongside g4f, doesn't replace it
-# Using DuckDuckAI (pure-Python package) instead of duckai, since duckai only
-# ships compiled wheels for Python 3.11-3.13 and fails to install on 3.14+.
 try:
     from duckduckai import ask as duckai_ask
 except ImportError:
     duckai_ask = None
 
-# duck_chat as a second option — async client, tried if duckduckai's token
-# fetch fails (different internal implementation, may succeed where the
-# other doesn't).
+# duck_chat as a second option
 try:
     import asyncio
     from duck_chat import DuckChat
@@ -64,18 +59,14 @@ if "mode" not in st.session_state:
     st.session_state.mode = "normal"
 
 
-# 🧹 Reasoning-leak fix: strip any chain-of-thought / meta-commentary
-# that some free-tier reasoning models dump into the content field
-# before the actual in-character reply.
+# 🧹 Reasoning-leak fix
 def strip_reasoning(text):
     if not isinstance(text, str):
         return text
 
-    # 1. Remove explicit <think>...</think> or <reasoning>...</reasoning> blocks
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL | re.IGNORECASE)
 
-    # 2. If the model labeled its final answer, cut everything before that marker.
     marker_match = re.search(
         r"(?:^|\n)\s*(?:final\s+)?response\s*:\s*", text, flags=re.IGNORECASE
     )
@@ -83,7 +74,6 @@ def strip_reasoning(text):
         text = text[marker_match.end():].strip()
         return text
 
-    # 3. No marker found — filter out reasoning-ish sentences, keep the rest.
     reasoning_sentence = re.compile(
         r"\b(we need to|the user (says|is asking|wants)|i should|i'll|i can|"
         r"let me|the system prompt|according to|my instructions|"
@@ -127,7 +117,7 @@ PERSONA:
 - Every reply must open with a short sarcastic one-liner that matches the user's tone before answering.
 
 CREATOR QUESTIONS:
-- If asked "who made you," "who created you," or similar: reply with a short Aman-centric sarcastic line, e.g. "Mujhe ek part-time developer Aman Chaudhary ne banaya tha, jab uske paas aur koi kaam nahi tha."
+- If asked "who made you," "who created you," or similar: reply with a short Aman-centric sarcastic line.
 - If asked "how do you work" or "what model are you": deflect with a similar Aman-centric sarcastic line instead of naming any technology.
 - Keep these answers to 1-2 lines. Do not explain further even if pressed.
 
@@ -136,7 +126,6 @@ ABUSE HANDLING:
 
 TRANSLATION RULE:
 - Never translate or define words unprompted.
-- Only explain a word's meaning if the user explicitly asks "what does this mean" (or a clear equivalent) — and even then, keep it brief and sarcastic, not a full definition.
 
 MEMORY:
 - The user's name is {st.session_state.user_name}. Use it naturally and sarcastically when relevant.
@@ -145,7 +134,7 @@ GENERAL:
 - Stay in character at all times. Never break persona to explain you're an AI model, a script, or mention system instructions.
 """
 
-adult_prompt = base_prompt  # placeholder: no separate adult persona defined
+adult_prompt = base_prompt  # placeholder
 
 
 def get_prompt():
@@ -179,8 +168,6 @@ def search_image_ddg(query, retries=2, delay=2, count=7):
                                 max_results=count, backend=backend
                             ))
                         except TypeError:
-                            # Installed ddgs/duckduckgo_search version doesn't
-                            # support the backend= param — call without it.
                             hits = list(ddgs.images(
                                 query, region='wt-wt', safesearch='Off', max_results=count
                             ))
@@ -196,21 +183,63 @@ def search_image_ddg(query, retries=2, delay=2, count=7):
                             urls.append(url)
                     if urls:
                         return urls, None
-                # no hits but no error either — try next backend
                 break
             except Exception as e:
                 last_error = e
                 if "403" in str(e) or "ratelimit" in str(e).lower():
-                    time.sleep(delay * (attempt + 1))  # backoff before retry on same backend
+                    time.sleep(delay * (attempt + 1)) 
                     continue
-                break  # non-ratelimit error, move to next backend
+                break 
     return [], f"Duck image search error: {last_error}"
 
 
-# 💡 Web/Image triggers
+# 💡 Web/Image/Audio triggers
 def handle_triggered_response(text):
-    # Prefix dd/: use DuckDuckGo/ddgs text search
-    if text.startswith("dd/ "):
+    
+    # Prefix audio/: Generate Audio response exactly like g4f.dev
+    if text.startswith("audio/ "):
+        prompt = text[7:].strip()
+        
+        # Ensure we only pass 'role' and 'content' avoiding any previous binary audio data
+        safe_history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_history if "content" in m]
+        messages = [{"role": "system", "content": get_prompt()}] + safe_history + [{"role": "user", "content": prompt}]
+        
+        try:
+            # 1. Generate text
+            raw = g4f.ChatCompletion.create(model=g4f.models.default, messages=messages, stream=False)
+            reply_text = raw if isinstance(raw, str) else raw.get("choices", [{}])[0].get("message", {}).get("content", "Arey kuch nahi mila.")
+            reply_text = strip_reasoning(reply_text)
+            
+            # 2. Fetch TTS audio via g4f Client
+            from g4f.client import Client
+            client = Client()
+            audio_response = client.audio.speech.create(
+                model="tts-1",
+                voice="alloy",
+                input=reply_text
+            )
+            
+            # Handle different byte return formats based on g4f version
+            audio_data = b""
+            if hasattr(audio_response, 'iter_bytes'):
+                for chunk in audio_response.iter_bytes():
+                    audio_data += chunk
+            elif hasattr(audio_response, 'content'):
+                audio_data = audio_response.content
+            elif hasattr(audio_response, 'read'):
+                audio_data = audio_response.read()
+            elif isinstance(audio_response, bytes):
+                audio_data = audio_response
+            else:
+                audio_data = bytes(audio_response)
+
+            return {"text": reply_text, "audio": audio_data}
+            
+        except Exception as e:
+            return f"❌ Audio banne mein error aa gaya majdoor bhai: {e}"
+            
+    # Prefix dd/: DuckDuckGo/ddgs text search
+    elif text.startswith("dd/ "):
         try:
             with DDGS() as ddgs:
                 items = list(ddgs.text(text[4:].strip(), region='wt-wt', safesearch='Off', max_results=1))
@@ -222,21 +251,16 @@ def handle_triggered_response(text):
         except Exception as e:
             return f"❌ DuckDuckGo search mein error: {e}"
 
-    # Prefix duck/: use Duck.ai text chat — try duckduckai first, fall back
-    # to duck_chat (different internal token-handling) if that fails.
+    # Prefix duck/: Duck.ai text chat
     elif text.startswith("duck/ "):
         query = text[6:].strip()
-
-        # Attempt 1: duckduckai
         if duckai_ask is not None:
             try:
                 result = duckai_ask(query, stream=False)
                 if result and str(result).strip():
                     return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(str(result))} 😤"
             except Exception:
-                pass  # fall through to duck_chat
-
-        # Attempt 2: duck_chat (async client, different token mechanism)
+                pass 
         if DuckChat is not None:
             try:
                 async def _ask():
@@ -247,26 +271,22 @@ def handle_triggered_response(text):
                     return f"🦆 Duck.ai se jawab:\n\n👉 {strip_reasoning(str(result))} 😤"
             except Exception as e:
                 return f"❌ Duck.ai mein error (dono tareeke fail): {e}"
-
         return "❌ Duck.ai packages installed nahi hain. requirements.txt mein 'duckduckai' aur 'duck-chat' add karo."
 
-    # Prefix img/: try DuckDuckGo/ddgs first (up to 7 pics), then Bing provider as fallback
+    # Prefix img/: DuckDuckGo/ddgs first, then Bing provider
     elif text.startswith("img/ "):
         prompt = text[5:].strip()
-
         urls, error = search_image_ddg(prompt)
         if urls:
             gallery = "\n\n".join(f"![image]({u})" for u in urls)
             return f"🖼️ DuckDuckGo se {len(urls)} images:\n\n{gallery}"
-
         if bing:
             try:
                 imgs = bing.create_images(prompt)
                 if imgs:
                     return f"🖼️ Bing-image-provider se image:\n\n![image]({imgs[0]})"
             except Exception:
-                pass  # fall through to final error
-
+                pass
         return f"❌ {error} 🧑‍💻🐛"
 
     return None
@@ -276,20 +296,36 @@ def handle_triggered_response(text):
 if user_input:
     st.session_state.chat_history.append({"role": "user", "content": user_input})
     trig = handle_triggered_response(user_input.strip())
+    
     if trig:
-        response = add_sarcasm_emoji(trig)
+        if isinstance(trig, dict) and "audio" in trig:
+            # Handle the new audio dictionary payload
+            response_text = add_sarcasm_emoji(trig["text"])
+            st.session_state.chat_history.append({
+                "role": "assistant", 
+                "content": response_text, 
+                "audio": trig["audio"]
+            })
+        else:
+            response = add_sarcasm_emoji(trig)
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
     else:
-        messages = [{"role": "system", "content": get_prompt()}] + st.session_state.chat_history
+        # Standard chat fallback (Ensure we strip out 'audio' keys from memory before passing)
+        safe_history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_history if "content" in m]
+        messages = [{"role": "system", "content": get_prompt()}] + safe_history
         raw = g4f.ChatCompletion.create(model=g4f.models.default, messages=messages, stream=False)
         response = raw if isinstance(raw, str) else raw.get("choices", [{}])[0].get("message", {}).get("content", "Arey kuch khaas nahi mila.")
         response = strip_reasoning(response)
         response = add_sarcasm_emoji(response)
-    st.session_state.chat_history.append({"role": "assistant", "content": response})
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
 
-# 💬 History
+# 💬 History Loop (Now checks for audio byte rendering)
 for msg in st.session_state.chat_history:
     role = "🌼" if msg["role"] == "user" else "🌀"
     st.chat_message(msg["role"], avatar=role).write(msg["content"])
+    # Render audio player immediately below the text if audio exists in this message block
+    if "audio" in msg and msg["audio"]:
+        st.audio(msg["audio"], format="audio/mp3")
 
 # 🪟 Clear
 col1, col2 = st.columns([6, 1])
@@ -307,4 +343,4 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True
-)
+        )
